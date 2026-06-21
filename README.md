@@ -61,6 +61,33 @@ npm run dev                 # http://localhost:5173
 Open http://localhost:5173, press ▶ (a real click is required to start audio),
 and ask the chat for a change.
 
+## Deploying to Cloudflare Pages
+
+The frontend builds to static files; the `/api/*` backend runs as Cloudflare
+Pages Functions (`web/functions/`, Workers runtime — the Express server in
+`server/` is only for local Node dev). Calls are same-origin, so no frontend env
+var is needed.
+
+Connect the GitHub repo in the Cloudflare Pages dashboard with:
+
+| Setting | Value |
+| --- | --- |
+| Root directory | `web` |
+| Build command | `npm run build` |
+| Build output directory | `dist` |
+| Compatibility flags | `nodejs_compat` (also set in `web/wrangler.toml`) |
+
+Environment variables (Settings → Environment variables):
+
+| Name | Value |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | your key (mark as a secret / encrypted) |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` (optional) |
+| `NODE_VERSION` | `22` (ensures a modern Node for the build) |
+
+Local test of the production Functions: `cd web && npx wrangler pages dev dist`
+(reads `web/.dev.vars` for the key).
+
 ## On the radar (not built yet, but the model is ready for them)
 - Live collaborative jam: `Song` is plain data → Yjs CRDT + a host-broadcast
   transport; audio renders locally per client (no streaming). Works on mobile.

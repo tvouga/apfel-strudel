@@ -3,7 +3,9 @@
 import type { Song } from '../song/model';
 import type { ToolCall } from './tools';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8787';
+// Same-origin by default: Vite proxies /api to the Express server in dev, and
+// Cloudflare Pages Functions serve /api in production. Override with VITE_API_URL.
+const API = import.meta.env.VITE_API_URL ?? '';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
