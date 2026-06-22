@@ -98,6 +98,9 @@
 }
 .section.on { border-color: var(--accent); color: var(--accent); background: rgba(124,156,255,.08); }
 
+/* Active-note highlights are painted with inline styles by highlight.ts
+   (intensity-based flash + fade), so no static rule is needed here. */
+
 /* center: editor + staging */
 .center { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
 .editor { flex: 1; overflow: auto; min-height: 0; padding: 0 10px; }

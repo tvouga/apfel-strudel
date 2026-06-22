@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { EditorView } from '@codemirror/view';
 import './App.css';
 import { Editor } from './components/Editor';
 import { TransportBar } from './components/TransportBar';
 import { PartsRail } from './components/PartsRail';
 import { ChatPanel } from './components/ChatPanel';
 import { StagingPanel } from './components/StagingPanel';
+import { applyHighlights } from './components/highlight';
 import type { Song } from './song/model';
 import { cloneSong } from './song/model';
 import { seedSong } from './song/seed';
-import { serializeForEditor, serializeForEngine, songFromText, resolveSelection } from './song/parse';
+import { serializeForEditor, songFromText, resolveSelection } from './song/parse';
 import type { SelectionContext } from './song/parse';
 import { getEngine } from './strudel/engine';
 import { streamChat, checkServer } from './ai/client';
@@ -22,6 +24,14 @@ interface Staging {
   candidate: Song;
   edits: AppliedEdit[];
   report: ValidationReport | null;
+}
+
+// Serialize a song, optionally soloing one part (others muted).
+function toText(song: Song, soloed: string | null): string {
+  if (!soloed) return serializeForEditor(song);
+  const c = cloneSong(song);
+  c.parts = c.parts.map((p) => ({ ...p, muted: p.name !== soloed }));
+  return serializeForEditor(c);
 }
 
 export default function App() {
@@ -44,38 +54,53 @@ export default function App() {
   const engine = getEngine();
   const songRef = useRef(song);
   songRef.current = song;
+  const editorTextRef = useRef(editorText);
+  editorTextRef.current = editorText;
+  const soloedRef = useRef(soloed);
+  soloedRef.current = soloed;
+  const viewRef = useRef<EditorView | null>(null);
 
   useEffect(() => {
     checkServer().then(setServerReady);
   }, []);
 
-  // Live cycle readout.
+  // Animation loop: cycle readout (throttled) + active-note highlights (every frame).
   useEffect(() => {
     let raf = 0;
-    const tick = () => {
-      setCycle(engine.cyclePosition());
+    let lastCycleUpdate = 0;
+    const tick = (t: number) => {
+      if (t - lastCycleUpdate > 80) {
+        setCycle(engine.cyclePosition());
+        lastCycleUpdate = t;
+      }
+      const view = viewRef.current;
+      if (view) {
+        // Only highlight when what's playing is exactly what's shown.
+        const aligned = engine.playing && engine.playingCode === editorTextRef.current;
+        applyHighlights(view, aligned ? engine.getHighlights() : []);
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [engine]);
 
-  // Apply solo to what actually plays.
-  const effectiveSong = useCallback(
-    (s: Song): Song => {
-      if (!soloed) return s;
-      const copy = cloneSong(s);
-      copy.parts = copy.parts.map((p) => ({ ...p, muted: p.name !== soloed }));
-      return copy;
-    },
-    [soloed],
+  // What the engine should currently play, given solo state.
+  const currentPlayText = useCallback(
+    () => toText(songRef.current, soloedRef.current),
+    [],
   );
 
-  const pushToEngine = useCallback(
-    (s: Song, quantize: boolean) => {
-      if (engine.playing) engine.update(effectiveSong(s), quantize);
+  // Commit a new song: update state, re-project the buffer, hot-swap audio.
+  const applySong = useCallback(
+    (next: Song, quantize: boolean) => {
+      setSong(next);
+      const text = serializeForEditor(next);
+      setEditorText(text);
+      engine.setTempo(next.tempo);
+      if (engine.playing) engine.update(toText(next, soloedRef.current), quantize);
     },
-    [engine, effectiveSong],
+    [engine],
   );
 
   const toggleTransport = async () => {
@@ -83,27 +108,24 @@ export default function App() {
       engine.stop();
       setPlaying(false);
     } else {
-      await engine.play(effectiveSong(songRef.current));
+      engine.setTempo(songRef.current.tempo);
+      await engine.play(currentPlayText());
       setPlaying(true);
     }
   };
 
   const onTempo = (bpm: number) => {
-    setSong((s) => {
-      const next = { ...s, tempo: bpm };
-      pushToEngine(next, false);
-      return next;
-    });
+    setSong((s) => ({ ...s, tempo: bpm }));
+    engine.setTempo(bpm); // tempo isn't in the buffer, so no re-eval needed
   };
 
-  // Editor edits flow back into the song (preserving mute by name).
+  // User edits flow back into the song; the engine plays their exact text.
   const onEditorChange = (text: string) => {
     setEditorText(text);
-    setSong((prev) => {
-      const next = songFromText(text, prev);
-      pushToEngine(next, true);
-      return next;
-    });
+    const next = songFromText(text, songRef.current);
+    setSong(next);
+    engine.setTempo(next.tempo);
+    if (engine.playing) engine.update(soloedRef.current ? toText(next, soloedRef.current) : text, true);
   };
 
   const onSelect = (text: string, from: number, to: number) => {
@@ -111,24 +133,17 @@ export default function App() {
   };
 
   const onToggleMute = (name: string) => {
-    setSong((s) => {
-      const next = cloneSong(s);
-      const p = next.parts.find((x) => x.name === name);
-      if (p) p.muted = !p.muted;
-      pushToEngine(next, true);
-      return next;
-    });
+    const next = cloneSong(songRef.current);
+    const p = next.parts.find((x) => x.name === name);
+    if (p) p.muted = !p.muted;
+    applySong(next, true);
   };
 
   const onSolo = (name: string) => {
-    setSoloed((cur) => {
-      const next = cur === name ? null : name;
-      const target = next
-        ? { ...songRef.current, parts: songRef.current.parts.map((p) => ({ ...p, muted: p.name !== next })) }
-        : songRef.current;
-      if (engine.playing) engine.update(target, true);
-      return next;
-    });
+    const next = soloed === name ? null : name;
+    setSoloed(next);
+    soloedRef.current = next;
+    if (engine.playing) engine.update(toText(songRef.current, next), true);
   };
 
   // --- Chat / AI editing ---
@@ -179,16 +194,18 @@ export default function App() {
     if (!staging) return;
     if (auditioning) {
       setAuditioning(false);
-      pushToEngine(song, false);
+      if (engine.playing) await engine.update(currentPlayText(), false);
       return;
     }
     setAuditioning(true);
     setAbSide('staged');
+    const text = toText(staging.candidate, soloedRef.current);
     if (!engine.playing) {
-      await engine.play(effectiveSong(staging.candidate));
+      engine.setTempo(staging.candidate.tempo);
+      await engine.play(text);
       setPlaying(true);
     } else {
-      await engine.preview(serializeForEngine(effectiveSong(staging.candidate)));
+      await engine.preview(text);
     }
   };
 
@@ -197,7 +214,7 @@ export default function App() {
     const next = abSide === 'staged' ? 'live' : 'staged';
     setAbSide(next);
     const target = next === 'staged' ? staging.candidate : song;
-    await engine.preview(serializeForEngine(effectiveSong(target)));
+    await engine.preview(toText(target, soloedRef.current));
   };
 
   const finishStaging = () => {
@@ -208,15 +225,12 @@ export default function App() {
 
   const onAccept = async () => {
     if (!staging) return;
-    const next = staging.candidate;
-    setSong(next);
-    setEditorText(serializeForEditor(next));
-    if (engine.playing) await engine.update(effectiveSong(next), true);
+    applySong(staging.candidate, true);
     finishStaging();
   };
 
   const onDiscard = async () => {
-    if (engine.playing) await engine.update(effectiveSong(song), false);
+    if (engine.playing) await engine.update(currentPlayText(), false);
     finishStaging();
   };
 
@@ -237,7 +251,12 @@ export default function App() {
       <div className="main">
         <PartsRail song={song} soloed={soloed} onToggleMute={onToggleMute} onSolo={onSolo} />
         <div className="center">
-          <Editor value={editorText} onChange={onEditorChange} onSelect={onSelect} />
+          <Editor
+            value={editorText}
+            onChange={onEditorChange}
+            onSelect={onSelect}
+            onReady={(v) => (viewRef.current = v)}
+          />
           {staging && (
             <StagingPanel
               edits={staging.edits}

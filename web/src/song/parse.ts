@@ -1,98 +1,98 @@
 // Maps the Song document <-> Strudel source text.
 //
-// Each part is serialized as a labeled statement (Strudel turns `name: pattern`
-// into `pattern.p('name')`, the same mechanism behind `$:`). A `// name` comment
-// header is kept for readability. Tempo lives in engine state, not the buffer.
+// Each part is a labeled statement (`name: pattern`, the same mechanism behind
+// `$:`), preceded by a `// name` header. A MUTED part has all its code lines
+// commented out — so the editor text is exactly what the engine evaluates
+// (muted = inert), which keeps note-highlight offsets aligned with the buffer.
 
 import type { Song, Part } from './model';
 
 const SAFE = /[^A-Za-z0-9_]/g;
+const LABEL = /^([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*[\s\S]*$/;
 
 export function safeLabel(name: string): string {
   const cleaned = name.trim().replace(SAFE, '_');
   return /^[A-Za-z_]/.test(cleaned) ? cleaned : `p_${cleaned}`;
 }
 
-// Buffer the user sees and edits: every part shown, regardless of mute.
+// The single serialization: what the editor shows AND what the engine evaluates.
 export function serializeForEditor(song: Song): string {
   if (song.parts.length === 0) return '// add a part, or ask the assistant for a groove\n';
-  return song.parts
-    .map((p) => `// ${p.name}\n${safeLabel(p.name)}: ${p.code}`)
-    .join('\n\n') + '\n';
+  return (
+    song.parts
+      .map((p) => {
+        const body = `${safeLabel(p.name)}: ${p.code}`;
+        if (p.muted) {
+          const commented = body
+            .split('\n')
+            .map((l) => `// ${l}`)
+            .join('\n');
+          return `// ${p.name} (muted)\n${commented}`;
+        }
+        return `// ${p.name}\n${body}`;
+      })
+      .join('\n\n') + '\n'
+  );
 }
 
-// What the engine actually plays: muted parts are dropped.
-export function serializeForEngine(song: Song): string {
-  const live = song.parts.filter((p) => !p.muted && p.code.trim());
-  if (live.length === 0) return 'silence';
-  return live.map((p) => `${safeLabel(p.name)}: ${p.code}`).join('\n');
+// True when the text has at least one line the engine would actually play.
+export function hasAudibleCode(text: string): boolean {
+  return text.split('\n').some((l) => {
+    const t = l.trim();
+    return t !== '' && !t.startsWith('//');
+  });
 }
 
-interface Block {
-  name?: string;
-  label?: string;
-  code: string;
+function stripComment(line: string): { isComment: boolean; text: string } {
+  const t = line.trim();
+  if (t.startsWith('//')) return { isComment: true, text: t.replace(/^\/\/\s?/, '') };
+  return { isComment: false, text: t };
 }
 
-// Parse editor text back into parts. Mute state is not encoded in the buffer, so
-// callers should re-apply it by matching part names against the previous Song.
+// Parse editor text into parts. Mute is read from whether the code is commented.
 export function parsePartsFromText(text: string): Part[] {
-  const lines = text.split('\n');
-  const blocks: Block[] = [];
-  let current: Block | null = null;
-  let pendingName: string | undefined;
+  const blocks = text.split(/\n[ \t]*\n/);
+  const parts: Part[] = [];
 
-  const labelRe = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(.*)$/;
+  for (const block of blocks) {
+    let nameHint: string | undefined;
+    let muted = false;
+    let started = false;
+    const codeLines: string[] = [];
 
-  for (const raw of lines) {
-    const line = raw.replace(/\s+$/, '');
-    const trimmed = line.trim();
-
-    if (trimmed === '') {
-      if (current) {
-        blocks.push(current);
-        current = null;
+    for (const raw of block.split('\n')) {
+      if (raw.trim() === '') continue;
+      const { isComment, text: stripped } = stripComment(raw);
+      if (!started) {
+        if (LABEL.test(stripped)) {
+          started = true;
+          if (isComment) muted = true;
+          codeLines.push(stripped);
+        } else if (isComment) {
+          nameHint = stripped.replace(/\(muted\)/i, '').trim() || nameHint;
+        } else {
+          started = true;
+          codeLines.push(stripped); // code without a label
+        }
+      } else {
+        codeLines.push(stripped);
       }
-      pendingName = undefined;
-      continue;
     }
 
-    if (trimmed.startsWith('//')) {
-      // A standalone comment becomes the friendly name for the next labeled line.
-      if (!current) pendingName = trimmed.replace(/^\/\/\s?/, '').trim() || undefined;
-      continue;
-    }
-
-    const m: RegExpMatchArray | null = !current ? line.match(labelRe) : null;
-    if (m) {
-      current = { label: m[1], name: pendingName, code: m[2].trim() };
-      pendingName = undefined;
-    } else if (current) {
-      current.code += '\n' + line.trim();
-    } else {
-      // Code with no label/header: keep as an anonymous part.
-      current = { code: trimmed };
-    }
+    if (codeLines.length === 0) continue;
+    const joined = codeLines.join('\n');
+    const m = joined.match(LABEL);
+    const label = m?.[1];
+    const code = (m ? joined.slice(joined.indexOf(':') + 1) : joined).trim();
+    if (!code) continue;
+    parts.push({ name: nameHint || label || `part${parts.length + 1}`, code, muted });
   }
-  if (current) blocks.push(current);
 
-  return blocks
-    .filter((b) => b.code.trim())
-    .map((b, i) => ({
-      name: b.name || b.label || `part${i + 1}`,
-      code: b.code.trim(),
-      muted: false,
-    }));
+  return parts;
 }
 
-// Re-parse text but preserve mute flags from the previous song (matched by name).
 export function songFromText(text: string, prev: Song): Song {
-  const parts = parsePartsFromText(text);
-  const muteByName = new Map(prev.parts.map((p) => [p.name, p.muted]));
-  for (const p of parts) {
-    if (muteByName.has(p.name)) p.muted = muteByName.get(p.name)!;
-  }
-  return { ...prev, parts };
+  return { ...prev, parts: parsePartsFromText(text) };
 }
 
 export interface SelectionContext {
@@ -100,7 +100,7 @@ export interface SelectionContext {
   snippet: string;
 }
 
-// Given a selection in the editor text, figure out which part it lands in.
+// Map a selection in the editor to the part that encloses it.
 export function resolveSelection(
   text: string,
   from: number,
@@ -110,9 +110,6 @@ export function resolveSelection(
   const snippet = text.slice(from, to).trim();
   if (!snippet) return null;
 
-  // Walk the part headers and label offsets to find the enclosing part.
-  const parts = parsePartsFromText(text);
-  const labelRe = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*:/;
   const lines = text.split('\n');
   let offset = 0;
   let currentName: string | undefined;
@@ -122,18 +119,16 @@ export function resolveSelection(
   for (const line of lines) {
     const start = offset;
     const end = offset + line.length;
-    const trimmed = line.trim();
-    if (trimmed.startsWith('//')) {
-      pendingName = trimmed.replace(/^\/\/\s?/, '').trim();
-    } else if (labelRe.test(line)) {
-      const m = line.match(labelRe)!;
-      currentName = pendingName || m[1];
+    const { isComment, text: stripped } = stripComment(line);
+    if (LABEL.test(stripped)) {
+      currentName = pendingName || stripped.match(LABEL)![1];
       pendingName = undefined;
+    } else if (isComment) {
+      pendingName = stripped.replace(/\(muted\)/i, '').trim() || pendingName;
     }
     if (from >= start && from <= end + 1 && currentName) bestName = currentName;
-    offset = end + 1; // + newline
+    offset = end + 1;
   }
 
-  const partName = bestName || parts[0]?.name || 'song';
-  return { partName, snippet };
+  return { partName: bestName || parsePartsFromText(text)[0]?.name || 'song', snippet };
 }

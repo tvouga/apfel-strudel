@@ -4,19 +4,21 @@ import { EditorState } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { javascript } from '@codemirror/lang-javascript';
 import { oneDark } from './editorTheme';
+import { highlightExtension } from './highlight';
 
 interface Props {
   value: string;
   onChange: (text: string) => void;
   onSelect: (text: string, from: number, to: number) => void;
+  onReady?: (view: EditorView) => void;
 }
 
-export function Editor({ value, onChange, onSelect }: Props) {
+export function Editor({ value, onChange, onSelect, onReady }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   // Keep latest callbacks without recreating the editor.
-  const cb = useRef({ onChange, onSelect });
-  cb.current = { onChange, onSelect };
+  const cb = useRef({ onChange, onSelect, onReady });
+  cb.current = { onChange, onSelect, onReady };
 
   useEffect(() => {
     if (!host.current) return;
@@ -28,6 +30,7 @@ export function Editor({ value, onChange, onSelect }: Props) {
         history(),
         javascript(),
         oneDark,
+        highlightExtension,
         EditorView.lineWrapping,
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.updateListener.of((u) => {
@@ -41,6 +44,7 @@ export function Editor({ value, onChange, onSelect }: Props) {
     });
     const v = new EditorView({ state, parent: host.current });
     view.current = v;
+    cb.current.onReady?.(v);
     return () => v.destroy();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
