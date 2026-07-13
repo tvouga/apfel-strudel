@@ -9,7 +9,7 @@ export const seedSong: Song = {
   ],
   sections: [
     { name: 'intro', active: false },
-    { name: 'verse', active: true },
+    { name: 'verse', active: false },
     { name: 'drop', active: false },
   ],
 };

@@ -8,7 +8,7 @@ import { ChatPanel } from './components/ChatPanel';
 import { StagingPanel } from './components/StagingPanel';
 import { applyHighlights } from './components/highlight';
 import type { Song } from './song/model';
-import { cloneSong } from './song/model';
+import { cloneSong, activeSectionName, partInSection, findPart } from './song/model';
 import { seedSong } from './song/seed';
 import { serializeForEditor, songFromText, resolveSelection } from './song/parse';
 import type { SelectionContext } from './song/parse';
@@ -26,11 +26,16 @@ interface Staging {
   report: ValidationReport | null;
 }
 
-// Serialize a song, optionally soloing one part (others muted).
+// Serialize a song for playback: solo wins; otherwise the active section
+// silences parts tagged to other sections.
 function toText(song: Song, soloed: string | null): string {
-  if (!soloed) return serializeForEditor(song);
   const c = cloneSong(song);
-  c.parts = c.parts.map((p) => ({ ...p, muted: p.name !== soloed }));
+  const section = activeSectionName(song);
+  if (soloed) {
+    c.parts = c.parts.map((p) => ({ ...p, muted: p.name !== soloed }));
+  } else if (section) {
+    c.parts = c.parts.map((p) => ({ ...p, muted: p.muted || !partInSection(p, section) }));
+  }
   return serializeForEditor(c);
 }
 
@@ -122,13 +127,17 @@ export default function App() {
     engine.setTempo(bpm); // tempo isn't in the buffer, so no re-eval needed
   };
 
-  // User edits flow back into the song; the engine plays their exact text.
+  // User edits flow back into the song; the engine plays their exact text
+  // unless a solo or an active section requires a projection.
   const onEditorChange = (text: string) => {
     setEditorText(text);
     const next = songFromText(text, songRef.current);
     setSong(next);
     engine.setTempo(next.tempo);
-    if (engine.playing) engine.update(soloedRef.current ? toText(next, soloedRef.current) : text, true);
+    if (engine.playing) {
+      const needsProjection = soloedRef.current || activeSectionName(next);
+      engine.update(needsProjection ? toText(next, soloedRef.current) : text, true);
+    }
   };
 
   const onSelect = (text: string, from: number, to: number) => {
@@ -147,6 +156,52 @@ export default function App() {
     setSoloed(next);
     soloedRef.current = next;
     if (engine.playing) engine.update(toText(songRef.current, next), true);
+  };
+
+  // --- Sections ---
+  const onToggleSection = (name: string) => {
+    const next = cloneSong(songRef.current);
+    next.sections = next.sections.map((s) => ({ ...s, active: s.name === name ? !s.active : false }));
+    setSong(next);
+    if (engine.playing) engine.update(toText(next, soloedRef.current), true);
+  };
+
+  const onAddSection = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const next = cloneSong(songRef.current);
+    if (next.sections.some((s) => s.name === trimmed)) return;
+    next.sections.push({ name: trimmed, active: false });
+    setSong(next);
+  };
+
+  const onRemoveSection = (name: string) => {
+    const next = cloneSong(songRef.current);
+    const wasActive = next.sections.find((s) => s.name === name)?.active;
+    next.sections = next.sections.filter((s) => s.name !== name);
+    next.parts = next.parts.map((p) => ({
+      ...p,
+      sectionTags: p.sectionTags?.filter((t) => t !== name),
+    }));
+    setSong(next);
+    if (wasActive && engine.playing) engine.update(toText(next, soloedRef.current), true);
+  };
+
+  const onTogglePartSection = (partName: string) => {
+    const section = activeSectionName(songRef.current);
+    if (!section) return;
+    const next = cloneSong(songRef.current);
+    const p = findPart(next, partName);
+    if (!p) return;
+    if (partInSection(p, section)) {
+      // Exclude: an untagged part first materializes as "member of everything".
+      const current = p.sectionTags ?? next.sections.map((s) => s.name);
+      p.sectionTags = current.filter((t) => t !== section);
+    } else {
+      p.sectionTags = [...(p.sectionTags ?? []), section];
+    }
+    setSong(next);
+    if (engine.playing) engine.update(toText(next, soloedRef.current), true);
   };
 
   // --- Chat / AI editing ---
@@ -252,7 +307,16 @@ export default function App() {
       </header>
 
       <div className={`main pane-${mobileTab}`}>
-        <PartsRail song={song} soloed={soloed} onToggleMute={onToggleMute} onSolo={onSolo} />
+        <PartsRail
+          song={song}
+          soloed={soloed}
+          onToggleMute={onToggleMute}
+          onSolo={onSolo}
+          onToggleSection={onToggleSection}
+          onAddSection={onAddSection}
+          onRemoveSection={onRemoveSection}
+          onTogglePartSection={onTogglePartSection}
+        />
         <div className="center">
           <Editor
             value={editorText}

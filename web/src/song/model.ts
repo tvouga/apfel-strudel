@@ -35,6 +35,17 @@ export function findPart(song: Song, name: string): Part | undefined {
   return song.parts.find((p) => p.name === name);
 }
 
+export function activeSectionName(song: Song): string | null {
+  return song.sections.find((s) => s.active)?.name ?? null;
+}
+
+// Untagged (undefined) parts belong to every section; tagged parts only to
+// the sections listed (an empty list means none).
+export function partInSection(part: Part, section: string): boolean {
+  if (!part.sectionTags) return true;
+  return part.sectionTags.includes(section);
+}
+
 // A short, stable signature used to detect whether two songs differ musically.
 export function songSignature(song: Song): string {
   return (

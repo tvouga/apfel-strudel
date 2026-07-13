@@ -92,7 +92,12 @@ export function parsePartsFromText(text: string): Part[] {
 }
 
 export function songFromText(text: string, prev: Song): Song {
-  return { ...prev, parts: parsePartsFromText(text) };
+  // Section tags live on the Song, not in the text — carry them over by name.
+  const parts = parsePartsFromText(text).map((p) => {
+    const old = prev.parts.find((x) => x.name === p.name);
+    return old?.sectionTags ? { ...p, sectionTags: [...old.sectionTags] } : p;
+  });
+  return { ...prev, parts };
 }
 
 export interface SelectionContext {
