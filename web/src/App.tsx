@@ -51,6 +51,9 @@ export default function App() {
   const [auditioning, setAuditioning] = useState(false);
   const [abSide, setAbSide] = useState<'staged' | 'live'>('staged');
 
+  // Which pane is visible on small screens (CSS ignores this on desktop).
+  const [mobileTab, setMobileTab] = useState<'parts' | 'editor' | 'chat'>('editor');
+
   const engine = getEngine();
   const songRef = useRef(song);
   songRef.current = song;
@@ -248,7 +251,7 @@ export default function App() {
         />
       </header>
 
-      <div className="main">
+      <div className={`main pane-${mobileTab}`}>
         <PartsRail song={song} soloed={soloed} onToggleMute={onToggleMute} onSolo={onSolo} />
         <div className="center">
           <Editor
@@ -279,6 +282,20 @@ export default function App() {
           onClearSelection={() => setSelection(null)}
         />
       </div>
+
+      <nav className="mobile-tabs">
+        <button className={mobileTab === 'parts' ? 'on' : ''} onClick={() => setMobileTab('parts')}>
+          parts
+        </button>
+        <button className={mobileTab === 'editor' ? 'on' : ''} onClick={() => setMobileTab('editor')}>
+          editor
+          {staging && <span className="tab-dot" />}
+        </button>
+        <button className={mobileTab === 'chat' ? 'on' : ''} onClick={() => setMobileTab('chat')}>
+          chat
+          {busy && <span className="tab-dot" />}
+        </button>
+      </nav>
     </div>
   );
 }
