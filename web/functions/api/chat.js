@@ -4,7 +4,7 @@
 // and stages the edits, so each tool_use is acknowledged as "staged".
 
 import Anthropic from '@anthropic-ai/sdk';
-import { buildSystemPrompt, TOOLS } from '../_lib/prompt.js';
+import { buildSystemPrompt, TOOLS, lookupTheory } from '../_lib/prompt.js';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -26,10 +26,10 @@ export async function onRequestPost(context) {
       const convo = messages.map((m) => ({ role: m.role, content: m.content }));
 
       try {
-        for (let turn = 0; turn < 4; turn++) {
+        for (let turn = 0; turn < 6; turn++) {
           const stream = client.messages.stream({
             model,
-            max_tokens: 1500,
+            max_tokens: 2000,
             system,
             tools: TOOLS,
             messages: convo,
@@ -39,7 +39,10 @@ export async function onRequestPost(context) {
           const final = await stream.finalMessage();
           const toolUses = final.content.filter((b) => b.type === 'tool_use');
           for (const tu of toolUses) {
-            send({ type: 'tool', id: tu.id, name: tu.name, input: tu.input });
+            // Reference lookups run server-side; only edits reach the client.
+            if (tu.name !== 'lookup_theory') {
+              send({ type: 'tool', id: tu.id, name: tu.name, input: tu.input });
+            }
           }
           if (final.stop_reason !== 'tool_use' || toolUses.length === 0) break;
 
@@ -49,7 +52,10 @@ export async function onRequestPost(context) {
             content: toolUses.map((tu) => ({
               type: 'tool_result',
               tool_use_id: tu.id,
-              content: 'Staged for the user to review and audition.',
+              content:
+                tu.name === 'lookup_theory'
+                  ? lookupTheory(tu.input)
+                  : 'Staged for the user to review and audition.',
             })),
           });
         }

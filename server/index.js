@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import Anthropic from '@anthropic-ai/sdk';
-import { buildSystemPrompt, TOOLS } from './prompt.js';
+import { buildSystemPrompt, TOOLS, lookupTheory } from './prompt.js';
 
 const PORT = process.env.PORT || 8787;
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
@@ -37,10 +37,10 @@ app.post('/api/chat', async (req, res) => {
   const convo = messages.map((m) => ({ role: m.role, content: m.content }));
 
   try {
-    for (let turn = 0; turn < 4; turn++) {
+    for (let turn = 0; turn < 6; turn++) {
       const stream = client.messages.stream({
         model: MODEL,
-        max_tokens: 1500,
+        max_tokens: 2000,
         system,
         tools: TOOLS,
         messages: convo,
@@ -52,21 +52,27 @@ app.post('/api/chat', async (req, res) => {
 
       const toolUses = final.content.filter((b) => b.type === 'tool_use');
       for (const tu of toolUses) {
-        send({ type: 'tool', id: tu.id, name: tu.name, input: tu.input });
+        // Reference lookups run server-side; only edits reach the client.
+        if (tu.name !== 'lookup_theory') {
+          send({ type: 'tool', id: tu.id, name: tu.name, input: tu.input });
+        }
       }
 
       if (final.stop_reason !== 'tool_use' || toolUses.length === 0) {
         break;
       }
 
-      // Acknowledge each edit as staged so the model can chain or wrap up.
+      // Answer lookups with reference text; acknowledge edits as staged.
       convo.push({ role: 'assistant', content: final.content });
       convo.push({
         role: 'user',
         content: toolUses.map((tu) => ({
           type: 'tool_result',
           tool_use_id: tu.id,
-          content: 'Staged for the user to review and audition.',
+          content:
+            tu.name === 'lookup_theory'
+              ? lookupTheory(tu.input)
+              : 'Staged for the user to review and audition.',
         })),
       });
     }
