@@ -1,5 +1,6 @@
 import type { Song } from '../song/model';
 import { activeSectionName, partInSection } from '../song/model';
+import type { LibraryEntry } from '../song/library';
 
 interface Props {
   song: Song;
@@ -10,6 +11,10 @@ interface Props {
   onAddSection: (name: string) => void;
   onRemoveSection: (name: string) => void;
   onTogglePartSection: (partName: string) => void;
+  library: LibraryEntry[];
+  onSaveSong: () => void;
+  onLoadSong: (id: string) => void;
+  onDeleteSong: (id: string) => void;
 }
 
 export function PartsRail({
@@ -21,6 +26,10 @@ export function PartsRail({
   onAddSection,
   onRemoveSection,
   onTogglePartSection,
+  library,
+  onSaveSong,
+  onLoadSong,
+  onDeleteSong,
 }: Props) {
   const active = activeSectionName(song);
 
@@ -95,6 +104,29 @@ export function PartsRail({
         ) : (
           song.sections.length > 0 && <div className="rail-hint">tap a section to play only its parts</div>
         )}
+      </div>
+      <div className="rail-head">library</div>
+      <div className="rail-list">
+        {library.length === 0 && <div className="rail-empty">no saved songs</div>}
+        {library.map((e) => (
+          <div key={e.id} className="lib-entry">
+            <button className="lib-load" onClick={() => onLoadSong(e.id)} title={`load "${e.name}"`}>
+              <span className="lib-name">{e.name}</span>
+              <span className="lib-meta">
+                {e.song.parts.length} part{e.song.parts.length === 1 ? '' : 's'} · {e.song.tempo} bpm
+              </span>
+            </button>
+            <button
+              className="lib-del"
+              onClick={() => onDeleteSong(e.id)}
+              aria-label={`delete ${e.name}`}
+              title="delete"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        <button className="rail-add" onClick={onSaveSong}>+ save current song</button>
       </div>
     </div>
   );

@@ -120,6 +120,23 @@
 }
 .rail-add:hover { color: var(--text-dim); border-color: var(--text-faint); }
 .rail-hint { font-size: 10.5px; color: var(--text-faint); padding: 2px 4px; line-height: 1.45; }
+.lib-entry {
+  display: flex; align-items: stretch;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: var(--bg-3);
+}
+.lib-load {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 1px;
+  text-align: left; background: transparent; border: none;
+  color: var(--text); padding: 6px 8px;
+}
+.lib-name { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-meta { font-size: 10px; color: var(--text-faint); }
+.lib-del {
+  border: none; background: transparent;
+  color: var(--text-faint); font-size: 10px; padding: 4px 8px;
+}
 
 /* Active-note highlights are painted with inline styles by highlight.ts
    (intensity-based flash + fade), so no static rule is needed here. */
@@ -272,6 +289,10 @@
   .section .section-name { padding: 10px; font-size: 13px; }
   .section .section-del { padding: 10px 12px; font-size: 12px; }
   .rail-add { padding: 9px 10px; font-size: 13px; }
+  .lib-load { padding: 9px 10px; }
+  .lib-name { font-size: 13.5px; }
+  .lib-meta { font-size: 11px; }
+  .lib-del { padding: 10px 12px; font-size: 12px; }
 
   /* chat */
   .msg { max-width: 100%; }

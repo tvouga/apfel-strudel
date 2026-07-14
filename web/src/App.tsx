@@ -10,6 +10,8 @@ import { applyHighlights } from './components/highlight';
 import type { Song } from './song/model';
 import { cloneSong, activeSectionName, partInSection, findPart } from './song/model';
 import { seedSong } from './song/seed';
+import { listLibrary, saveToLibrary, removeFromLibrary } from './song/library';
+import type { LibraryEntry } from './song/library';
 import { serializeForEditor, songFromText, resolveSelection } from './song/parse';
 import type { SelectionContext } from './song/parse';
 import { getEngine } from './strudel/engine';
@@ -58,6 +60,8 @@ export default function App() {
 
   // Which pane is visible on small screens (CSS ignores this on desktop).
   const [mobileTab, setMobileTab] = useState<'parts' | 'editor' | 'chat'>('editor');
+
+  const [library, setLibrary] = useState<LibraryEntry[]>(() => listLibrary());
 
   const engine = getEngine();
   const songRef = useRef(song);
@@ -204,6 +208,28 @@ export default function App() {
     if (engine.playing) engine.update(toText(next, soloedRef.current), true);
   };
 
+  // --- Library ---
+  const onSaveSong = () => {
+    const name = window.prompt('Save song as:', library[0]?.name ?? 'my song');
+    if (!name?.trim()) return;
+    setLibrary(saveToLibrary(name.trim(), songRef.current));
+  };
+
+  const onLoadSong = (id: string) => {
+    const entry = library.find((e) => e.id === id);
+    if (!entry) return;
+    if (!window.confirm(`Load "${entry.name}"? The current song is replaced (save it first if you want to keep it).`)) return;
+    setSoloed(null);
+    soloedRef.current = null;
+    applySong(cloneSong(entry.song), true);
+  };
+
+  const onDeleteSong = (id: string) => {
+    const entry = library.find((e) => e.id === id);
+    if (entry && !window.confirm(`Delete "${entry.name}" from the library?`)) return;
+    setLibrary(removeFromLibrary(id));
+  };
+
   // --- Chat / AI editing ---
   const onSend = async (input: string) => {
     const userMsg: ChatMessage = {
@@ -316,6 +342,10 @@ export default function App() {
           onAddSection={onAddSection}
           onRemoveSection={onRemoveSection}
           onTogglePartSection={onTogglePartSection}
+          library={library}
+          onSaveSong={onSaveSong}
+          onLoadSong={onLoadSong}
+          onDeleteSong={onDeleteSong}
         />
         <div className="center">
           <Editor
